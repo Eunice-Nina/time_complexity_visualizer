@@ -1,5 +1,6 @@
 import io
 import os
+import json
 import time
 import base64
 
@@ -10,11 +11,23 @@ import matplotlib.pyplot as plt
 from flask import Flask, request, jsonify
 
 from algorithms import ALGORITHMS
+from models import db, Analysis
 
 app = Flask(__name__)
 
-STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
 os.makedirs(STATIC_DIR, exist_ok=True)
+
+# Database setup: analyses saved via /save_analysis go into a SQLite
+# file (analysis.db) instead of a JSON file, using SQLAlchemy as the
+# only place SQL is written.
+app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{os.path.join(BASE_DIR, 'analysis.db')}"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+db.init_app(app)
+
+with app.app_context():
+    db.create_all()
 
 
 def time_complexity_visualizer(algo_name, n_min, n_max, n_step):
@@ -97,11 +110,67 @@ def analyze():
     })
 
 
+@app.route("/save_analysis", methods=["POST"])
+def save_analysis():
+    algo = request.args.get("algo")
+    step = request.args.get("step", type=int)
+    n_max = request.args.get("n_max", type=int)
+
+    if not algo or step is None or n_max is None:
+        return jsonify({
+            "error": "Missing required query params: algo, step, n_max"
+        }), 400
+
+    # tolerate the example URL's stray quotes/brackets, e.g. algo=['linear_search']
+    algo = algo.strip("[]'\" ")
+
+    if algo not in ALGORITHMS:
+        return jsonify({
+            "error": f"Unsupported algorithm: {algo}",
+            "supported_algorithms": sorted(ALGORITHMS.keys())
+        }), 400
+
+    if step <= 0 or n_max <= 0:
+        return jsonify({"error": "step and n_max must be positive integers"}), 400
+
+    input_sizes, times, encoded_image, filepath = time_complexity_visualizer(
+        algo, 0, n_max, step
+    )
+
+    # Persist the run through SQLAlchemy (no raw SQL, no JSON file) —
+    # the lists are stored as JSON-encoded text columns.
+    analysis = Analysis(
+        algorithm=algo,
+        n_min=0,
+        n_max=n_max,
+        step=step,
+        input_sizes=json.dumps(input_sizes),
+        times_seconds=json.dumps(times),
+        image_path=filepath,
+    )
+    db.session.add(analysis)
+    db.session.commit()
+
+    return jsonify({
+        "message": "Analysis saved successfully",
+        "analysis": analysis.to_dict()
+    }), 201
+
+
+@app.route("/analyses", methods=["GET"])
+def list_analyses():
+    """List previously saved analyses (newest first)."""
+    analyses = Analysis.query.order_by(Analysis.created_at.desc()).all()
+    return jsonify([a.to_dict() for a in analyses])
+
+
 @app.route("/", methods=["GET"])
 def index():
     return jsonify({
         "message": "Time complexity visualizer API",
         "usage": "/analyze?algo=<name>&step=<int>&n_max=<int>",
+        "save_usage": "POST /save_analysis?algo=<name>&step=<int>&n_max=<int>",
+        "list_usage": "/analyses",
         "supported_algorithms": sorted(ALGORITHMS.keys())
     })
 
