@@ -92,6 +92,52 @@ The browser will show a block of JSON rather than a picture. That is normal, bec
 - **`merge_sort`:** it grows as n log n, so the curve rises more gently than the quadratic ones.
 - **`factorial`:** despite the name, it is a single loop multiplying up to n, so it grows linearly like `linear_search`. A large `n_max` (such as 10000) makes the trend easier to spot, since each step is very cheap.
 
+## Saving an Analysis to the Database
+
+```
+POST /save_analysis?algo=<name>&step=<int>&n_max=<int>
+```
+
+This runs the same timing/plot logic as `/analyze`, but instead of only
+returning the result, it persists it with **SQLAlchemy** (no raw SQL) to a
+local SQLite database (`analysis.db`, created automatically on first run
+and excluded from git via `.gitignore`). Each saved run becomes a row in
+the `analysis` table (see `models.py`), storing the algorithm, its
+parameters, the timing data, and the path to the generated plot.
+
+Example:
+
+```
+http://localhost:8000/save_analysis?algo=bubble_sort&step=100&n_max=1000
+```
+
+Response:
+
+```json
+{
+  "message": "Analysis saved successfully",
+  "analysis": {
+    "id": 1,
+    "algorithm": "bubble_sort",
+    "n_min": 0,
+    "n_max": 1000,
+    "step": 100,
+    "input_sizes": [1, 100, 200, ...],
+    "times_seconds": [0.000002, 0.0004, ...],
+    "image_path": "/absolute/path/to/static/bubble_sort_plot.png",
+    "created_at": "2026-09-27T20:24:55.226385"
+  }
+}
+```
+
+### Viewing saved analyses
+
+```
+GET /analyses
+```
+
+Returns every saved analysis (newest first) straight from the database.
+
 ## Design Notes
 
 - **Searches** look for a value that is never in the data, which forces the worst case and shows the true complexity instead of an early lucky match.
