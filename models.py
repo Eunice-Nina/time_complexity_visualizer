@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timezone
 
 from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash, check_password_hash
 
 db = SQLAlchemy()
 
@@ -37,3 +38,17 @@ class Analysis(db.Model):
             "image_path": self.image_path,
             "created_at": self.created_at.isoformat(),
         }
+
+
+class User(db.Model):
+    """A registered user who may log in and save analyses."""
+
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)

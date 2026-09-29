@@ -8,10 +8,13 @@ import matplotlib
 matplotlib.use("Agg")  # non-interactive backend, safe for a server process
 import matplotlib.pyplot as plt
 
+from datetime import timedelta
+
 from flask import Flask, request, jsonify
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 
 from algorithms import ALGORITHMS
-from models import db, Analysis
+from models import db, Analysis, User
 
 app = Flask(__name__)
 
@@ -25,6 +28,30 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{os.path.join(BASE_DIR, 'analysis.db')}"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db.init_app(app)
+
+# JWT setup: token must arrive in the Authorization header as
+# "Bearer <token>" -- query-string tokens are NOT accepted.
+app.config["JWT_SECRET_KEY"] = os.environ.get("JWT_SECRET_KEY", "change-me-in-production-use-a-32-byte-key")
+app.config["JWT_TOKEN_LOCATION"] = ["headers"]
+app.config["JWT_HEADER_NAME"] = "Authorization"
+app.config["JWT_HEADER_TYPE"] = "Bearer"
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=1)
+jwt = JWTManager(app)
+
+
+@jwt.unauthorized_loader
+def missing_token(reason):
+    return jsonify({"error": "I don't know you"}), 401
+
+
+@jwt.invalid_token_loader
+def invalid_token(reason):
+    return jsonify({"error": "Bye"}), 401
+
+
+@jwt.expired_token_loader
+def expired_token(jwt_header, jwt_payload):
+    return jsonify({"error": "Bye"}), 401
 
 with app.app_context():
     db.create_all()
@@ -110,7 +137,34 @@ def analyze():
     })
 
 
+@app.route("/register", methods=["POST"])
+def register():
+    data = request.get_json(silent=True) or {}
+    username = data.get("username")
+    password = data.get("password")
+    if not username or not password:
+        return jsonify({"error": "username and password are required"}), 400
+    if User.query.filter_by(username=username).first():
+        return jsonify({"error": "username already taken"}), 409
+    user = User(username=username)
+    user.set_password(password)
+    db.session.add(user)
+    db.session.commit()
+    return jsonify({"message": "User registered successfully"}), 201
+
+
+@app.route("/login", methods=["POST"])
+def login():
+    data = request.get_json(silent=True) or {}
+    user = User.query.filter_by(username=data.get("username")).first()
+    if not user or not user.check_password(data.get("password", "")):
+        return jsonify({"error": "Invalid credentials"}), 401
+    token = create_access_token(identity=str(user.id))
+    return jsonify({"access_token": token}), 200
+
+
 @app.route("/save_analysis", methods=["POST"])
+@jwt_required()
 def save_analysis():
     algo = request.args.get("algo")
     step = request.args.get("step", type=int)
@@ -169,7 +223,8 @@ def index():
     return jsonify({
         "message": "Time complexity visualizer API",
         "usage": "/analyze?algo=<name>&step=<int>&n_max=<int>",
-        "save_usage": "POST /save_analysis?algo=<name>&step=<int>&n_max=<int>",
+        "auth_usage": "POST /register and POST /login (JSON: username, password) -> access_token",
+        "save_usage": "POST /save_analysis?algo=<name>&step=<int>&n_max=<int> (header: Authorization: Bearer <token>)",
         "list_usage": "/analyses",
         "supported_algorithms": sorted(ALGORITHMS.keys())
     })
