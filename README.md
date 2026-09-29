@@ -92,6 +92,38 @@ The browser will show a block of JSON rather than a picture. That is normal, bec
 - **`merge_sort`:** it grows as n log n, so the curve rises more gently than the quadratic ones.
 - **`factorial`:** despite the name, it is a single loop multiplying up to n, so it grows linearly like `linear_search`. A large `n_max` (such as 10000) makes the trend easier to spot, since each step is very cheap.
 
+## Authentication (JWT)
+
+`/save_analysis` requires a valid JWT. The token must be sent in the
+`Authorization` header as a Bearer token (never as a query parameter).
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/register` | POST | Create a user (JSON body: `username`, `password`) |
+| `/login` | POST | Log in and receive an `access_token` |
+| `/save_analysis` | POST | Protected: requires `Authorization: Bearer <access_token>` |
+
+### Example (PowerShell)
+
+```powershell
+# 1. register (once)
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/register -ContentType "application/json" -Body '{"username":"nina","password":"secret123"}'
+
+# 2. log in and store the token
+$token = (Invoke-RestMethod -Method Post -Uri http://localhost:8000/login -ContentType "application/json" -Body '{"username":"nina","password":"secret123"}').access_token
+
+# 3. call the protected endpoint
+Invoke-RestMethod -Method Post -Uri "http://localhost:8000/save_analysis?algo=bubble_sort&step=100&n_max=1000" -Headers @{Authorization="Bearer $token"}
+```
+
+### Error responses
+
+- No token: `401 {"error": "I don't know you"}`
+- Invalid or expired token: `401 {"error": "Bye"}`
+
+Tokens expire after 1 hour. Set a real secret with the `JWT_SECRET_KEY`
+environment variable before deploying.
+
 ## Saving an Analysis to the Database
 
 ```
